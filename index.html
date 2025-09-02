@@ -739,6 +739,7 @@
         }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="supabase-client.js"></script>
 </head>
 <body>
@@ -798,6 +799,7 @@
                 Orders <span id="ordersBadge" class="badge">0</span>
             </button>
             <button id="menuTab" onclick="switchAdminTab('menu')">Manage Menu</button>
+            <button id="tablesTab" onclick="switchAdminTab('tables')">Manage Tables</button>
         </div>
 
         <!-- Orders Management -->
@@ -830,6 +832,20 @@
                 <button class="btn btn-secondary" onclick="showAddCategoryModal()">Add Category</button>
             </div>
             <div id="adminMenuContainer"></div>
+        </div>
+
+        <!-- Table Management -->
+        <div id="tablesContent" class="tab-content">
+            <h3>Generate Table QR Codes</h3>
+            <div class="form-group" style="max-width: 300px;">
+                <label for="tableCount">Number of Tables:</label>
+                <input type="number" id="tableCount" value="10" min="1" max="100">
+            </div>
+            <button class="btn btn-primary" onclick="generateQRCodes()">Generate QR Codes</button>
+            <hr style="margin: 2rem 0;">
+            <div id="qrCodeContainer" style="display: flex; flex-wrap: wrap; gap: 1rem;">
+                <!-- QR Codes will be generated here -->
+            </div>
         </div>
     </div>
 
@@ -1058,6 +1074,7 @@
         let cart = [];
         let currentOrderTab = 'pending';
         let currentAdminTab = 'orders';
+        let currentTable = null;
 
 
         // Supabase-backed functions will replace localStorage logic.
@@ -1460,7 +1477,8 @@
                     id: item.id,
                     quantity: item.quantity,
                     price: item.price
-                }))
+                })),
+                table_number_in: currentTable // Pass the table number
             };
 
             const { data: newOrderId, error } = await supabase.rpc('create_order_with_items', orderDetails);
@@ -1492,13 +1510,75 @@
             currentAdminTab = tab;
             document.getElementById('ordersTab').classList.toggle('active', tab === 'orders');
             document.getElementById('menuTab').classList.toggle('active', tab === 'menu');
+            document.getElementById('tablesTab').classList.toggle('active', tab === 'tables');
+
             document.getElementById('ordersContent').classList.toggle('active', tab === 'orders');
             document.getElementById('menuContent').classList.toggle('active', tab === 'menu');
+            document.getElementById('tablesContent').classList.toggle('active', tab === 'tables');
 
             if (tab === 'orders') {
                 renderOrders();
             } else if (tab === 'menu') {
                 await renderAdminMenu();
+            } else if (tab === 'tables') {
+                // Logic for tables tab can be added here if needed on load
+            }
+        }
+
+        function generateQRCodes() {
+            const tableCount = parseInt(document.getElementById('tableCount').value);
+            const qrCodeContainer = document.getElementById('qrCodeContainer');
+            qrCodeContainer.innerHTML = ''; // Clear previous codes
+
+            if (isNaN(tableCount) || tableCount < 1 || tableCount > 100) {
+                alert('Please enter a valid number of tables (1-100).');
+                return;
+            }
+
+            for (let i = 1; i <= tableCount; i++) {
+                const url = new URL(window.location.href);
+                url.searchParams.set('table', i);
+                // Remove hash to ensure clean URL for QR code
+                url.hash = '';
+
+                const wrapper = document.createElement('div');
+                wrapper.style.textAlign = 'center';
+                wrapper.style.padding = '1rem';
+                wrapper.style.border = '1px solid #E5E7EB';
+                wrapper.style.borderRadius = '8px';
+
+                const label = document.createElement('div');
+                label.style.fontWeight = '600';
+                label.style.marginBottom = '0.5rem';
+                label.textContent = `Table ${i}`;
+
+                const qrCodeEl = document.createElement('div');
+                wrapper.appendChild(label);
+                wrapper.appendChild(qrCodeEl);
+
+                const qrcode = new QRCode(qrCodeEl, {
+                    text: url.href,
+                    width: 128,
+                    height: 128,
+                });
+
+                const downloadLink = document.createElement('a');
+                downloadLink.textContent = 'Download';
+                downloadLink.style.display = 'block';
+                downloadLink.style.marginTop = '0.5rem';
+                downloadLink.style.cursor = 'pointer';
+                downloadLink.onclick = function() {
+                    // Wait for QR code to render
+                    setTimeout(() => {
+                        const canvas = qrCodeEl.getElementsByTagName('canvas')[0];
+                        downloadLink.href = canvas.toDataURL();
+                        downloadLink.download = `table-${i}-qrcode.png`;
+                        // This click is now on the link itself, which will trigger the download
+                    }, 100);
+                };
+
+                wrapper.appendChild(downloadLink);
+                qrCodeContainer.appendChild(wrapper);
             }
         }
 
@@ -1551,7 +1631,7 @@
                     <div class="order-header">
                         <div>
                             <div class="order-number">Order #${order.id}</div>
-                            <div>Customer: ${order.customer_name}</div>
+                            <div>For: ${order.table_number ? `Table ${order.table_number}` : order.customer_name}</div>
                             <div>Type: ${order.order_type}</div>
                             <div>Time: ${new Date(order.timestamp).toLocaleString()}</div>
                         </div>
@@ -2307,7 +2387,18 @@
             // Initial check for customer view
             const { data: { session } } = await supabase.auth.getSession();
             if (!session?.user) {
-                 if (!currentCustomer) {
+                const urlParams = new URLSearchParams(window.location.search);
+                const tableNumber = urlParams.get('table');
+
+                if (tableNumber) {
+                    // QR Code Flow
+                    currentTable = parseInt(tableNumber);
+                    currentCustomer = `Table ${currentTable}`; // Use this as the identifier
+                    document.getElementById('nameModal').classList.add('hidden');
+                    await renderMenu();
+                    // No need to show past orders for a table
+                } else if (!currentCustomer) {
+                    // Standard Customer Flow
                     document.getElementById('nameModal').classList.remove('hidden');
                 } else {
                     await renderMenu();
