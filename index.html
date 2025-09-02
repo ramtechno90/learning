@@ -738,6 +738,8 @@
             margin-left: 0.5rem;
         }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-client.js"></script>
 </head>
 <body>
     <!-- Header -->
@@ -1036,100 +1038,11 @@
         let currentAdminTab = 'orders';
 
 
-        // LocalStorage Helper Functions
-        function getData(key) {
-            try {
-                const data = localStorage.getItem(key);
-                return data ? JSON.parse(data) : null;
-            } catch (error) {
-                console.error('Error reading from localStorage:', error);
-                return null;
-            }
-        }
-
-        function saveData(key, data) {
-            try {
-                localStorage.setItem(key, JSON.stringify(data));
-                return true;
-            } catch (error) {
-                console.error('Error saving to localStorage:', error);
-                return false;
-            }
-        }
-
-        // Initialize Default Data
-        function initializeDefaultData() {
-            if (!getData('restaurant_categories')) {
-                const defaultCategories = [
-                    { id: 1, name: 'Appetizers' },
-                    { id: 2, name: 'Main Courses' },
-                    { id: 3, name: 'Desserts' },
-                    { id: 4, name: 'Beverages' }
-                ];
-                saveData('restaurant_categories', defaultCategories);
-            }
-
-            if (!getData('restaurant_menu')) {
-                const defaultMenu = [
-                    {
-                        id: 1,
-                        categoryId: 1,
-                        name: 'Truffle Arancini',
-                        description: 'Crispy risotto balls with truffle oil and parmesan',
-                        price: 14.00,
-                        available: true
-                    },
-                    {
-                        id: 2,
-                        categoryId: 1,
-                        name: 'Caesar Salad',
-                        description: 'Crisp romaine lettuce with parmesan and house dressing',
-                        price: 12.00,
-                        available: true
-                    },
-                    {
-                        id: 3,
-                        categoryId: 2,
-                        name: 'Grilled Salmon',
-                        description: 'Atlantic salmon with lemon herb butter and vegetables',
-                        price: 28.00,
-                        available: true
-                    },
-                    {
-                        id: 4,
-                        categoryId: 2,
-                        name: 'Beef Tenderloin',
-                        description: '8oz prime cut with roasted potatoes and red wine reduction',
-                        price: 42.00,
-                        available: true
-                    },
-                    {
-                        id: 5,
-                        categoryId: 3,
-                        name: 'Chocolate Lava Cake',
-                        description: 'Warm chocolate cake with molten center and vanilla ice cream',
-                        price: 10.00,
-                        available: true
-                    },
-                    {
-                        id: 6,
-                        categoryId: 4,
-                        name: 'House Wine',
-                        description: 'Red or white wine selection',
-                        price: 8.00,
-                        available: true
-                    }
-                ];
-                saveData('restaurant_menu', defaultMenu);
-            }
-
-            if (!getData('restaurant_orders')) {
-                saveData('restaurant_orders', []);
-            }
-        }
+        // Supabase-backed functions will replace localStorage logic.
+        // The old getData, saveData, and initializeDefaultData functions are no longer needed.
 
         // Role Management
-        function switchRole(role) {
+        async function switchRole(role) {
             currentRole = role;
             document.getElementById('customerBtn').classList.toggle('active', role === 'customer');
             document.getElementById('adminBtn').classList.toggle('active', role === 'admin');
@@ -1141,24 +1054,33 @@
             if (role === 'customer' && !currentCustomer) {
                 document.getElementById('nameModal').classList.remove('hidden');
             } else if (role === 'admin') {
-                renderAdminView();
+                await renderAdminView();
             }
         }
 
         // Customer Orders Management
-        function updateCustomerOrdersDisplay() {
-            const orders = getData('restaurant_orders') || [];
-            const myOrders = orders.filter(order => 
-                order.customerName === currentCustomer
-            );
-
+        async function updateCustomerOrdersDisplay() {
             const showOrdersBtn = document.getElementById('showOrdersBtn');
             const ordersBadge = document.getElementById('ordersBadgeCustomer');
 
-            // Check if payment was confirmed by customer
-            const paymentConfirmed = myOrders.some(order => order.paymentConfirmed);
+            if (!currentCustomer) {
+                showOrdersBtn.classList.add('hidden');
+                ordersBadge.classList.add('hidden');
+                return;
+            }
+
+            const { data: myOrders, error } = await supabase
+                .from('orders')
+                .select('*')
+                .eq('customer_name', currentCustomer);
+
+            if (error) {
+                console.error('Error fetching customer orders:', error);
+                return;
+            }
+
+            const paymentConfirmed = myOrders.some(order => order.payment_confirmed);
             if (paymentConfirmed) {
-                // Show thank you message and hide orders
                 showThankYouMessage();
                 showOrdersBtn.classList.add('hidden');
                 ordersBadge.classList.add('hidden');
@@ -1170,11 +1092,10 @@
                 ordersBadge.textContent = myOrders.length;
                 ordersBadge.classList.remove('hidden');
                 
-                // Show request bill button if all orders are completed
                 const allCompleted = myOrders.every(order => order.status === 'completed');
                 const requestBillBtn = document.getElementById('requestBillBtn');
-                const hasPendingBill = myOrders.some(order => order.billRequested && !order.billApproved);
-                const hasBillApproved = myOrders.some(order => order.billApproved && !order.paymentConfirmed);
+                const hasPendingBill = myOrders.some(order => order.bill_requested && !order.bill_approved);
+                const hasBillApproved = myOrders.some(order => order.bill_approved && !order.payment_confirmed);
                 
                 if (allCompleted && !hasPendingBill && !hasBillApproved) {
                     requestBillBtn.classList.remove('hidden');
@@ -1186,55 +1107,69 @@
                 ordersBadge.classList.add('hidden');
             }
 
-            renderCustomerOrders();
+            await renderCustomerOrders(myOrders);
         }
 
-        function renderCustomerOrders() {
-            const orders = getData('restaurant_orders') || [];
-            const myOrders = orders.filter(order => 
-                order.customerName === currentCustomer
-            );
-
+        async function renderCustomerOrders(myOrders) {
             const ordersList = document.getElementById('customerOrdersList');
             const ordersTotal = document.getElementById('customerOrdersTotal');
 
-            if (myOrders.length === 0) {
+            if (!myOrders || myOrders.length === 0) {
                 ordersList.innerHTML = '<div class="empty-state">No orders yet</div>';
                 ordersTotal.classList.add('hidden');
                 return;
             }
 
-            ordersList.innerHTML = myOrders.map(order => `
-                <div class="order-card" style="margin-bottom: 1rem;">
-                    <div class="order-header">
-                        <div>
-                            <div class="order-number">Order #${order.id}</div>
-                            <div>Type: ${order.orderType}</div>
-                            <div>Time: ${new Date(order.timestamp).toLocaleString()}</div>
-                        </div>
-                        <div class="status-badge status-${order.status}">${order.status.toUpperCase()}</div>
-                    </div>
-                    
-                    <div class="order-items">
-                        ${order.items.map(item => `
-                            <div class="order-item">
-                                <div>${item.name} x ${item.quantity}</div>
-                                <div>$${(item.price * item.quantity).toFixed(2)}</div>
+            // Fetch all order items for all orders in one go
+            const orderIds = myOrders.map(o => o.id);
+            const { data: allOrderItems, error } = await supabase
+                .from('order_items')
+                .select(`
+                    *,
+                    menu_items ( name )
+                `)
+                .in('order_id', orderIds);
+
+            if (error) {
+                console.error('Error fetching order items:', error);
+                ordersList.innerHTML = '<div class="empty-state">Error loading order details.</div>';
+                return;
+            }
+
+            ordersList.innerHTML = myOrders.map(order => {
+                const itemsForThisOrder = allOrderItems.filter(item => item.order_id === order.id);
+                return `
+                    <div class="order-card" style="margin-bottom: 1rem;">
+                        <div class="order-header">
+                            <div>
+                                <div class="order-number">Order #${order.id}</div>
+                                <div>Type: ${order.order_type}</div>
+                                <div>Time: ${new Date(order.timestamp).toLocaleString()}</div>
                             </div>
-                        `).join('')}
+                            <div class="status-badge status-${order.status}">${order.status.toUpperCase()}</div>
+                        </div>
+
+                        <div class="order-items">
+                            ${itemsForThisOrder.map(item => `
+                                <div class="order-item">
+                                    <div>${item.menu_items.name} x ${item.quantity}</div>
+                                    <div>$${(item.price * item.quantity).toFixed(2)}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+
+                        ${order.special_instructions ? `<div style="margin-top: 0.5rem;"><strong>Special Instructions:</strong> ${order.special_instructions}</div>` : ''}
+
+                        <div class="order-total">Total: $${order.total.toFixed(2)}</div>
+
+                        ${order.bill_requested && !order.bill_approved ? '<div style="background: #FEF3C7; color: #92400E; padding: 0.5rem; border-radius: 8px; margin-top: 1rem; text-align: center;">Bill Requested - Waiting for approval</div>' : ''}
+                        ${order.bill_approved && !order.payment_confirmed ? '<div style="background: #DBEAFE; color: #1E40AF; padding: 0.5rem; border-radius: 8px; margin-top: 1rem; text-align: center;">Bill Approved - Please confirm payment</div>' : ''}
+                        ${order.payment_confirmed ? '<div style="background: #D1FAE5; color: #065F46; padding: 0.5rem; border-radius: 8px; margin-top: 1rem; text-align: center;">Payment Confirmed - Thank you!</div>' : ''}
                     </div>
+                `;
+            }).join('');
 
-                    ${order.specialInstructions ? `<div style="margin-top: 0.5rem;"><strong>Special Instructions:</strong> ${order.specialInstructions}</div>` : ''}
-                    
-                    <div class="order-total">Total: $${order.total.toFixed(2)}</div>
-                    
-                    ${order.billRequested && !order.billApproved ? '<div style="background: #FEF3C7; color: #92400E; padding: 0.5rem; border-radius: 8px; margin-top: 1rem; text-align: center;">Bill Requested - Waiting for approval</div>' : ''}
-                    ${order.billApproved && !order.paymentConfirmed ? '<div style="background: #DBEAFE; color: #1E40AF; padding: 0.5rem; border-radius: 8px; margin-top: 1rem; text-align: center;">Bill Approved - Please confirm payment</div>' : ''}
-                    ${order.paymentConfirmed ? '<div style="background: #D1FAE5; color: #065F46; padding: 0.5rem; border-radius: 8px; margin-top: 1rem; text-align: center;">Payment Confirmed - Thank you!</div>' : ''}
-                </div>
-            `).join('');
-
-            const totalAmount = myOrders.reduce((sum, order) => sum + order.total, 0);
+            const totalAmount = myOrders.reduce((sum, order) => sum + parseFloat(order.total), 0);
             ordersTotal.innerHTML = `<strong>Total Amount: $${totalAmount.toFixed(2)}</strong>`;
             ordersTotal.classList.remove('hidden');
         }
@@ -1248,21 +1183,20 @@
             document.getElementById('customerOrdersModal').classList.add('hidden');
         }
 
-        function requestBill() {
-            const orders = getData('restaurant_orders') || [];
-            const myOrders = orders.filter(order => 
-                order.customerName === currentCustomer && order.status === 'completed'
-            );
+        async function requestBill() {
+            const { error } = await supabase
+                .from('orders')
+                .update({ bill_requested: true })
+                .eq('customer_name', currentCustomer)
+                .eq('status', 'completed');
 
-            // Mark all completed customer orders as bill requested
-            orders.forEach(order => {
-                if (order.customerName === currentCustomer && order.status === 'completed') {
-                    order.billRequested = true;
-                }
-            });
+            if (error) {
+                console.error('Error requesting bill:', error);
+                alert('Failed to request bill.');
+                return;
+            }
 
-            saveData('restaurant_orders', orders);
-            updateCustomerOrdersDisplay();
+            await updateCustomerOrdersDisplay();
             alert('Bill requested! Please wait for admin approval.');
         }
 
@@ -1280,23 +1214,43 @@
         }
 
         // Customer Name Management
-        function setCustomerName() {
+        async function setCustomerName() {
             const name = document.getElementById('customerName').value.trim();
             if (name) {
                 currentCustomer = name;
                 document.getElementById('nameModal').classList.add('hidden');
-                renderMenu();
-                updateCustomerOrdersDisplay();
+                await renderMenu();
+                await updateCustomerOrdersDisplay();
             } else {
                 alert('Please enter your name');
             }
         }
 
         // Menu Rendering
-        function renderMenu() {
-            const categories = getData('restaurant_categories') || [];
-            const menuItems = getData('restaurant_menu') || [];
+        async function renderMenu() {
             const container = document.getElementById('menuContainer');
+            container.innerHTML = '<div class="loading">Loading menu...</div>';
+
+            const { data: categories, error: categoriesError } = await supabase
+                .from('categories')
+                .select('*')
+                .order('id', { ascending: true });
+
+            if (categoriesError) {
+                console.error('Error fetching categories:', categoriesError);
+                container.innerHTML = '<div class="empty-state">Error loading menu. Please try again later.</div>';
+                return;
+            }
+
+            const { data: menuItems, error: menuItemsError } = await supabase
+                .from('menu_items')
+                .select('*');
+
+            if (menuItemsError) {
+                console.error('Error fetching menu items:', menuItemsError);
+                container.innerHTML = '<div class="empty-state">Error loading menu items. Please try again later.</div>';
+                return;
+            }
 
             if (categories.length === 0) {
                 container.innerHTML = '<div class="empty-state">No menu items available</div>';
@@ -1304,7 +1258,7 @@
             }
 
             container.innerHTML = categories.map(category => {
-                const categoryItems = menuItems.filter(item => item.categoryId === category.id && item.available);
+                const categoryItems = menuItems.filter(item => item.category_id === category.id && item.available);
                 
                 return `
                     <div class="category-section">
@@ -1320,7 +1274,7 @@
                                         <p>${item.description}</p>
                                         <div class="menu-item-footer">
                                             <span class="price">$${item.price.toFixed(2)}</span>
-                                            <button class="btn btn-primary" onclick="addToCart(${item.id})" ${!item.available ? 'disabled' : ''}>
+                                            <button class="btn btn-primary" onclick='addToCart(${JSON.stringify(item)})' ${!item.available ? 'disabled' : ''}>
                                                 ${item.available ? 'Add to Cart' : 'Out of Stock'}
                                             </button>
                                         </div>
@@ -1355,13 +1309,10 @@
         }
 
         // Cart Management
-        function addToCart(itemId) {
-            const menuItems = getData('restaurant_menu') || [];
-            const item = menuItems.find(i => i.id === itemId);
-            
+        function addToCart(item) {
             if (!item) return;
 
-            const existingItem = cart.find(i => i.id === itemId);
+            const existingItem = cart.find(i => i.id === item.id);
             if (existingItem) {
                 existingItem.quantity += 1;
             } else {
@@ -1475,26 +1426,28 @@
             showCart();
         }
 
-        function placeOrder() {
+        async function placeOrder() {
             if (cart.length === 0) return;
 
-            const orders = getData('restaurant_orders') || [];
-            const newOrder = {
-                id: Date.now(),
-                customerName: currentCustomer,
-                items: [...cart],
-                orderType: document.getElementById('orderType').value,
-                specialInstructions: document.getElementById('specialInstructions').value,
-                total: cart.reduce((sum, item) => sum + (item.price * item.quantity), 0),
-                status: 'pending',
-                timestamp: new Date().toISOString(),
-                billRequested: false,
-                billApproved: false,
-                paymentConfirmed: false
+            const orderDetails = {
+                customer_name_in: currentCustomer,
+                order_type_in: document.getElementById('orderType').value,
+                special_instructions_in: document.getElementById('specialInstructions').value,
+                total_in: cart.reduce((sum, item) => sum + (item.price * item.quantity), 0),
+                items_in: cart.map(item => ({
+                    id: item.id,
+                    quantity: item.quantity,
+                    price: item.price
+                }))
             };
 
-            orders.push(newOrder);
-            saveData('restaurant_orders', orders);
+            const { data: newOrderId, error } = await supabase.rpc('create_order_with_items', orderDetails);
+
+            if (error) {
+                console.error('Error placing order:', error);
+                alert('There was an error placing your order. Please try again.');
+                return;
+            }
 
             // Clear cart
             cart = [];
@@ -1507,13 +1460,13 @@
             document.getElementById('orderType').value = 'dine-in';
             document.getElementById('specialInstructions').value = '';
             
-            alert(`Order placed successfully! Order #${newOrder.id}`);
+            alert(`Order placed successfully! Order #${newOrderId}`);
             
-            updateCustomerOrdersDisplay();
+            await updateCustomerOrdersDisplay();
         }
 
         // Admin Functions
-        function switchAdminTab(tab) {
+        async function switchAdminTab(tab) {
             currentAdminTab = tab;
             document.getElementById('ordersTab').classList.toggle('active', tab === 'orders');
             document.getElementById('menuTab').classList.toggle('active', tab === 'menu');
@@ -1523,7 +1476,7 @@
             if (tab === 'orders') {
                 renderOrders();
             } else if (tab === 'menu') {
-                renderAdminMenu();
+                await renderAdminMenu();
             }
         }
 
@@ -1539,47 +1492,64 @@
             renderOrders();
         }
 
-        function renderAdminView() {
-            renderOrders();
-            updateOrderBadges();
+        async function renderAdminView() {
+            await renderOrders();
+            await updateOrderBadges();
         }
 
-        function renderOrders() {
-            const orders = getData('restaurant_orders') || [];
-            const filteredOrders = orders.filter(order => order.status === currentOrderTab);
+        async function renderOrders() {
             const container = document.getElementById(`${currentOrderTab}Orders`);
+            container.innerHTML = '<div class="loading">Loading orders...</div>';
 
-            if (filteredOrders.length === 0) {
+            const { data: orders, error } = await supabase
+                .from('orders')
+                .select(`
+                    *,
+                    order_items (
+                        *,
+                        menu_items ( name )
+                    )
+                `)
+                .eq('status', currentOrderTab)
+                .order('timestamp', { ascending: false });
+
+            if (error) {
+                console.error(`Error fetching ${currentOrderTab} orders:`, error);
+                container.innerHTML = '<div class="empty-state">Failed to load orders.</div>';
+                return;
+            }
+
+            if (orders.length === 0) {
                 container.innerHTML = '<div class="empty-state">No orders found</div>';
                 return;
             }
 
-            container.innerHTML = filteredOrders.map(order => `
+            container.innerHTML = orders.map(order => `
                 <div class="order-card">
                     <div class="order-header">
                         <div>
                             <div class="order-number">Order #${order.id}</div>
-                            <div>Customer: ${order.customerName}</div>
-                            <div>Type: ${order.orderType}</div>
+                            <div>Customer: ${order.customer_name}</div>
+                            <div>Type: ${order.order_type}</div>
                             <div>Time: ${new Date(order.timestamp).toLocaleString()}</div>
                         </div>
                         <div class="status-badge status-${order.status}">${order.status.toUpperCase()}</div>
                     </div>
                     
                     <div class="order-items">
-                        ${order.items.map(item => `
+                        ${order.order_items.map(item => `
                             <div class="order-item">
-                                <div>${item.name} x ${item.quantity}</div>
+                                <div>${item.menu_items.name} x ${item.quantity}</div>
                                 <div>$${(item.price * item.quantity).toFixed(2)}</div>
                             </div>
                         `).join('')}
                     </div>
 
-                    ${order.specialInstructions ? `<div><strong>Special Instructions:</strong> ${order.specialInstructions}</div>` : ''}
+                    ${order.special_instructions ? `<div><strong>Special Instructions:</strong> ${order.special_instructions}</div>` : ''}
                     
                     <div class="order-total">Total: $${order.total.toFixed(2)}</div>
                     
-                    ${order.billRequested ? '<div style="background: #FEF3C7; color: #92400E; padding: 0.5rem; border-radius: 8px; margin: 1rem 0; text-align: center; font-weight: bold;">🧾 BILL REQUESTED</div>' : ''}
+                    ${order.bill_requested ? '<div style="background: #FEF3C7; color: #92400E; padding: 0.5rem; border-radius: 8px; margin: 1rem 0; text-align: center; font-weight: bold;">🧾 BILL REQUESTED</div>' : ''}
                     
                     <div style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
                         ${order.status === 'pending' ? `
@@ -1592,11 +1562,11 @@
                         ${order.status === 'rejected' ? `
                             <button type="button" class="btn btn-success" onclick="updateOrderStatus(${order.id}, 'pending')">Restore to Pending</button>
                         ` : ''}
-                        ${order.billRequested && !order.billApproved ? `
-                            <button type="button" class="btn btn-primary" onclick="generateInvoice('${order.customerName}')">Generate Invoice</button>
+                        ${order.bill_requested && !order.bill_approved ? `
+                            <button type="button" class="btn btn-primary" onclick="generateInvoice('${order.customer_name}')">Generate Invoice</button>
                         ` : ''}
-                        ${order.billApproved && !order.paymentConfirmed ? `
-                            <button type="button" class="btn btn-success" onclick="confirmPayment('${order.customerName}')">Confirm Payment Received</button>
+                        ${order.bill_approved && !order.payment_confirmed ? `
+                            <button type="button" class="btn btn-success" onclick="confirmPayment('${order.customer_name}')">Confirm Payment Received</button>
                         ` : ''}
                         ${(order.status === 'completed' || order.status === 'rejected') ? `
                             <button type="button" class="btn btn-danger" onclick="deleteOrder(${order.id})">Delete</button>
@@ -1605,23 +1575,26 @@
                 </div>
             `).join('');
 
-            updateOrderBadges();
+            updateOrderBadges(); // This will also need to be refactored.
         }
 
         // Invoice Management
-        function generateInvoice(customerName) {
-            const orders = getData('restaurant_orders') || [];
-            const customerOrders = orders.filter(order => 
-                order.customerName === customerName && order.billRequested && !order.billApproved && !order.paymentConfirmed
-            );
+        async function generateInvoice(customerName) {
+            const { data: customerOrders, error } = await supabase
+                .from('orders')
+                .select('*, order_items(*, menu_items(name))')
+                .eq('customer_name', customerName)
+                .eq('bill_requested', true)
+                .eq('payment_confirmed', false);
 
-            if (customerOrders.length === 0) {
+            if (error || !customerOrders || customerOrders.length === 0) {
+                console.error('Error fetching orders for invoice:', error);
                 alert('No orders found for bill generation');
                 return;
             }
 
             const invoiceContent = document.getElementById('invoiceContent');
-            const totalAmount = customerOrders.reduce((sum, order) => sum + order.total, 0);
+            const totalAmount = customerOrders.reduce((sum, order) => sum + parseFloat(order.total), 0);
             const tax = totalAmount * 0.1; // 10% tax
             const grandTotal = totalAmount + tax;
 
@@ -1642,15 +1615,15 @@
                         <h4 style="margin-bottom: 1rem; color: #1F2937;">Order Details:</h4>
                         ${customerOrders.map(order => `
                             <div style="margin-bottom: 1rem; padding: 1rem; background: white; border-radius: 8px;">
-                                <div style="font-weight: 600; margin-bottom: 0.5rem;">Order #${order.id} - ${order.orderType}</div>
+                                <div style="font-weight: 600; margin-bottom: 0.5rem;">Order #${order.id} - ${order.order_type}</div>
                                 <div style="font-size: 0.9rem; color: #6B7280; margin-bottom: 0.5rem;">${new Date(order.timestamp).toLocaleString()}</div>
-                                ${order.items.map(item => `
+                                ${order.order_items.map(item => `
                                     <div style="display: flex; justify-content: space-between; padding: 0.25rem 0;">
-                                        <span>${item.name} x ${item.quantity}</span>
+                                        <span>${item.menu_items.name} x ${item.quantity}</span>
                                         <span>$${(item.price * item.quantity).toFixed(2)}</span>
                                     </div>
                                 `).join('')}
-                                ${order.specialInstructions ? `<div style="font-size: 0.9rem; color: #6B7280; margin-top: 0.5rem;"><em>Note: ${order.specialInstructions}</em></div>` : ''}
+                                ${order.special_instructions ? `<div style="font-size: 0.9rem; color: #6B7280; margin-top: 0.5rem;"><em>Note: ${order.special_instructions}</em></div>` : ''}
                                 <div style="text-align: right; font-weight: 600; margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid #E5E7EB;">
                                     Order Total: $${order.total.toFixed(2)}
                                 </div>
@@ -1689,60 +1662,82 @@
             document.getElementById('approveInvoiceBtn').classList.add('hidden');
         }
 
-        function approveInvoice() {
+        async function approveInvoice() {
             const customerName = document.getElementById('approveInvoiceBtn').getAttribute('data-customer');
-            const orders = getData('restaurant_orders') || [];
             
-            // Mark all customer orders as bill approved (but not payment confirmed yet)
-            orders.forEach(order => {
-                if (order.customerName === customerName && order.billRequested && !order.billApproved) {
-                    order.billApproved = true;
-                }
-            });
+            const { error } = await supabase
+                .from('orders')
+                .update({ bill_approved: true })
+                .eq('customer_name', customerName)
+                .eq('bill_requested', true);
 
-            saveData('restaurant_orders', orders);
+            if (error) {
+                console.error('Error approving invoice:', error);
+                alert('Failed to approve invoice.');
+                return;
+            }
+
             hideInvoice();
-            renderOrders();
+            // No manual render needed, real-time will update the view.
             alert(`Invoice approved and sent to ${customerName}! Waiting for payment.`);
         }
 
-        function confirmPayment(customerName) {
-            const orders = getData('restaurant_orders') || [];
-            
-            // Mark all customer orders as payment confirmed
-            orders.forEach(order => {
-                if (order.customerName === customerName && order.billApproved) {
-                    order.paymentConfirmed = true;
-                }
-            });
+        async function confirmPayment(customerName) {
+            const { error } = await supabase
+                .from('orders')
+                .update({ payment_confirmed: true })
+                .eq('customer_name', customerName)
+                .eq('bill_approved', true);
 
-            saveData('restaurant_orders', orders);
-            renderOrders();
+            if (error) {
+                console.error('Error confirming payment:', error);
+                alert('Failed to confirm payment.');
+                return;
+            }
+
+            // No manual render needed, real-time will update the view.
             alert(`Payment confirmed for ${customerName}!`);
         }
 
-        function updateOrderStatus(orderId, newStatus) {
-            const orders = getData('restaurant_orders') || [];
-            const order = orders.find(o => o.id === orderId);
-            
-            if (order) {
-                order.status = newStatus;
-                saveData('restaurant_orders', orders);
-                renderOrders();
+        async function updateOrderStatus(orderId, newStatus) {
+            const { error } = await supabase
+                .from('orders')
+                .update({ status: newStatus })
+                .eq('id', orderId);
+
+            if (error) {
+                console.error('Error updating order status:', error);
+                alert('Failed to update order status.');
+                // No return here, so the UI still updates on the client.
             }
+            // No manual render needed, real-time will update the view.
         }
 
-        function deleteOrder(orderId) {
+        async function deleteOrder(orderId) {
             if (confirm('Are you sure you want to delete this order?')) {
-                const orders = getData('restaurant_orders') || [];
-                const filteredOrders = orders.filter(o => o.id !== orderId);
-                saveData('restaurant_orders', filteredOrders);
-                renderOrders();
+                const { error } = await supabase
+                    .from('orders')
+                    .delete()
+                    .eq('id', orderId);
+
+                if (error) {
+                    console.error('Error deleting order:', error);
+                    alert('Failed to delete order.');
+                }
+                // No manual render needed, real-time will update the view.
             }
         }
 
-        function updateOrderBadges() {
-            const orders = getData('restaurant_orders') || [];
+        async function updateOrderBadges() {
+            const { data: orders, error } = await supabase
+                .from('orders')
+                .select('id, status');
+
+            if (error) {
+                console.error('Error fetching orders for badges:', error);
+                return;
+            }
+
             const statusCounts = {
                 pending: orders.filter(o => o.status === 'pending').length,
                 accepted: orders.filter(o => o.status === 'accepted').length,
@@ -1756,20 +1751,41 @@
                 badge.classList.toggle('hidden', statusCounts[status] === 0);
             });
 
-            const totalOrders = Object.values(statusCounts).reduce((sum, count) => sum + count, 0);
+            const totalOrders = orders.length;
             const ordersBadge = document.getElementById('ordersBadge');
             ordersBadge.textContent = totalOrders;
             ordersBadge.classList.toggle('hidden', totalOrders === 0);
         }
 
         // Menu Management
-        function renderAdminMenu() {
-            const categories = getData('restaurant_categories') || [];
-            const menuItems = getData('restaurant_menu') || [];
+        async function renderAdminMenu() {
             const container = document.getElementById('adminMenuContainer');
+            container.innerHTML = '<div class="loading">Loading menu...</div>';
+
+            const { data: categories, error: categoriesError } = await supabase
+                .from('categories')
+                .select('*')
+                .order('id', { ascending: true });
+
+            if (categoriesError) {
+                console.error('Error fetching categories:', categoriesError);
+                container.innerHTML = '<div class="empty-state">Error loading menu.</div>';
+                return;
+            }
+
+            const { data: menuItems, error: menuItemsError } = await supabase
+                .from('menu_items')
+                .select('*')
+                .order('id', { ascending: true });
+
+            if (menuItemsError) {
+                console.error('Error fetching menu items:', menuItemsError);
+                container.innerHTML = '<div class="empty-state">Error loading menu items.</div>';
+                return;
+            }
 
             container.innerHTML = categories.map(category => {
-                const categoryItems = menuItems.filter(item => item.categoryId === category.id);
+                const categoryItems = menuItems.filter(item => item.category_id === category.id);
                 
                 return `
                     <div class="category-section">
@@ -1790,7 +1806,7 @@
                                             <span class="price">$${item.price.toFixed(2)}</span>
                                             <div style="display: flex; flex-direction: column; gap: 0.5rem;">
                                                 <button type="button" class="btn btn-primary" onclick="editMenuItem(${item.id})" style="font-size: 0.8rem; padding: 5px 10px;">Edit</button>
-                                                <button type="button" class="btn btn-secondary" onclick="toggleItemAvailability(${item.id})" style="font-size: 0.8rem; padding: 5px 10px;">
+                                                <button type="button" class="btn btn-secondary" onclick="toggleItemAvailability(${item.id}, ${item.available})" style="font-size: 0.8rem; padding: 5px 10px;">
                                                     ${item.available ? 'Unavailable' : 'Available'}
                                                 </button>
                                                 <button type="button" class="btn btn-danger" onclick="deleteMenuItem(${item.id})" style="font-size: 0.8rem; padding: 5px 10px;">Delete</button>
@@ -1810,10 +1826,21 @@
             }
         }
 
-        function showAddItemModal() {
-            const categories = getData('restaurant_categories') || [];
+        async function showAddItemModal() {
             const categorySelect = document.getElementById('itemCategory');
+            categorySelect.innerHTML = '<option>Loading categories...</option>';
             
+            const { data: categories, error } = await supabase
+                .from('categories')
+                .select('id, name')
+                .order('name', { ascending: true });
+
+            if (error) {
+                console.error('Error fetching categories for modal:', error);
+                categorySelect.innerHTML = '<option>Error loading categories</option>';
+                return;
+            }
+
             categorySelect.innerHTML = categories.map(cat => 
                 `<option value="${cat.id}">${cat.name}</option>`
             ).join('');
@@ -1835,65 +1862,93 @@
             document.getElementById('addCategoryForm').reset();
         }
 
-        function toggleItemAvailability(itemId) {
-            const menuItems = getData('restaurant_menu') || [];
-            const item = menuItems.find(i => i.id === itemId);
-            
-            if (item) {
-                item.available = !item.available;
-                saveData('restaurant_menu', menuItems);
-                renderAdminMenu();
-                if (currentRole === 'customer') {
-                    renderMenu();
-                }
+        async function toggleItemAvailability(itemId, isAvailable) {
+            const { error } = await supabase
+                .from('menu_items')
+                .update({ available: !isAvailable })
+                .eq('id', itemId);
+
+            if (error) {
+                console.error('Error toggling item availability:', error);
+                alert('Failed to update item availability.');
+                return;
+            }
+
+            await renderAdminMenu();
+            if (currentRole === 'customer') {
+                await renderMenu();
             }
         }
 
-        function deleteMenuItem(itemId) {
+        async function deleteMenuItem(itemId) {
             if (confirm('Are you sure you want to delete this menu item?')) {
-                const menuItems = getData('restaurant_menu') || [];
-                const filteredItems = menuItems.filter(i => i.id !== itemId);
-                saveData('restaurant_menu', filteredItems);
-                renderAdminMenu();
-                if (currentRole === 'customer') {
-                    renderMenu();
-                }
-            }
-        }
+                const { error } = await supabase
+                    .from('menu_items')
+                    .delete()
+                    .eq('id', itemId);
 
-        function deleteCategory(categoryId) {
-            const menuItems = getData('restaurant_menu') || [];
-            const categoryItems = menuItems.filter(item => item.categoryId === categoryId);
-            
-            if (categoryItems.length > 0) {
-                if (!confirm('This category contains menu items. Deleting it will also delete all items in this category. Continue?')) {
+                if (error) {
+                    console.error('Error deleting menu item:', error);
+                    alert('Failed to delete menu item.');
                     return;
                 }
-            }
 
-            const categories = getData('restaurant_categories') || [];
-            const filteredCategories = categories.filter(c => c.id !== categoryId);
-            const filteredItems = menuItems.filter(i => i.categoryId !== categoryId);
-            
-            saveData('restaurant_categories', filteredCategories);
-            saveData('restaurant_menu', filteredItems);
-            renderAdminMenu();
-            if (currentRole === 'customer') {
-                renderMenu();
+                await renderAdminMenu();
+                if (currentRole === 'customer') {
+                    await renderMenu();
+                }
             }
         }
 
-        function editMenuItem(itemId) {
-            const menuItems = getData('restaurant_menu') || [];
-            const categories = getData('restaurant_categories') || [];
-            const item = menuItems.find(i => i.id === itemId);
-            
-            if (!item) return;
+        async function deleteCategory(categoryId) {
+            // No need to check for items, the database handles cascade delete.
+            // However, a confirmation is still good practice.
+            if (confirm('Are you sure you want to delete this category? This will also delete all menu items within it.')) {
+                const { error } = await supabase
+                    .from('categories')
+                    .delete()
+                    .eq('id', categoryId);
+
+                if (error) {
+                    console.error('Error deleting category:', error);
+                    alert('Failed to delete category.');
+                    return;
+                }
+
+                await renderAdminMenu();
+                if (currentRole === 'customer') {
+                    await renderMenu();
+                }
+            }
+        }
+
+        async function editMenuItem(itemId) {
+            const { data: item, error: itemError } = await supabase
+                .from('menu_items')
+                .select('*')
+                .eq('id', itemId)
+                .single();
+
+            if (itemError) {
+                console.error('Error fetching item for edit:', itemError);
+                alert('Could not load item details.');
+                return;
+            }
+
+            const { data: categories, error: catError } = await supabase
+                .from('categories')
+                .select('id, name');
+
+            if (catError) {
+                console.error('Error fetching categories for edit:', catError);
+                alert('Could not load categories.');
+                return;
+            }
 
             // Populate category dropdown
             const categorySelect = document.getElementById('editItemCategory');
             categorySelect.innerHTML = categories.map(cat => 
-                `<option value="${cat.id}" ${cat.id === item.categoryId ? 'selected' : ''}>${cat.name}</option>`
+                `<option value="${cat.id}" ${cat.id === item.category_id ? 'selected' : ''}>${cat.name}</option>`
             ).join('');
 
             // Populate form fields
@@ -1911,11 +1966,18 @@
             document.getElementById('editItemForm').reset();
         }
 
-        function editCategoryName(categoryId) {
-            const categories = getData('restaurant_categories') || [];
-            const category = categories.find(c => c.id === categoryId);
+        async function editCategoryName(categoryId) {
+            const { data: category, error } = await supabase
+                .from('categories')
+                .select('id, name')
+                .eq('id', categoryId)
+                .single();
             
-            if (!category) return;
+            if (error) {
+                console.error('Error fetching category for edit:', error);
+                alert('Could not load category details.');
+                return;
+            }
 
             document.getElementById('editCategoryId').value = category.id;
             document.getElementById('editCategoryName').value = category.name;
@@ -1947,98 +2009,139 @@
         document.getElementById('customerBtn').addEventListener('click', () => switchRole('customer'));
         document.getElementById('adminBtn').addEventListener('click', () => switchRole('admin'));
 
-        document.getElementById('addItemForm').addEventListener('submit', function(e) {
+        document.getElementById('addItemForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            const menuItems = getData('restaurant_menu') || [];
             const newItem = {
-                id: Date.now(),
-                categoryId: parseInt(document.getElementById('itemCategory').value),
-                name: document.getElementById('itemName').value,
-                description: document.getElementById('itemDescription').value,
+                category_id: parseInt(document.getElementById('itemCategory').value),
+                name: document.getElementById('itemName').value.trim(),
+                description: document.getElementById('itemDescription').value.trim(),
                 price: parseFloat(document.getElementById('itemPrice').value),
                 available: document.getElementById('itemAvailable').checked
             };
+
+            if (!newItem.name || !newItem.price) {
+                alert('Please provide at least a name and a price.');
+                return;
+            }
+
+            const { error } = await supabase
+                .from('menu_items')
+                .insert([newItem]);
+
+            if (error) {
+                console.error('Error adding menu item:', error);
+                alert('Failed to add menu item.');
+                return;
+            }
             
-            menuItems.push(newItem);
-            saveData('restaurant_menu', menuItems);
             hideAddItemModal();
-            renderAdminMenu();
+            await renderAdminMenu();
             if (currentRole === 'customer') {
-                renderMenu();
+                await renderMenu();
             }
         });
 
-        document.getElementById('addCategoryForm').addEventListener('submit', function(e) {
+        document.getElementById('addCategoryForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            const categories = getData('restaurant_categories') || [];
-            const newCategory = {
-                id: Date.now(),
-                name: document.getElementById('categoryName').value
-            };
+            const categoryName = document.getElementById('categoryName').value.trim();
+            if (!categoryName) {
+                alert('Please enter a category name.');
+                return;
+            }
+
+            const { error } = await supabase
+                .from('categories')
+                .insert([{ name: categoryName }]);
+
+            if (error) {
+                console.error('Error adding category:', error);
+                alert('Failed to add category.');
+                return;
+            }
             
-            categories.push(newCategory);
-            saveData('restaurant_categories', categories);
             hideAddCategoryModal();
-            renderAdminMenu();
+            // Re-render menus to show the new category
+            await renderAdminMenu();
             if (currentRole === 'customer') {
-                renderMenu();
+                await renderMenu();
             }
         });
 
-        document.getElementById('editItemForm').addEventListener('submit', function(e) {
+        document.getElementById('editItemForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            const menuItems = getData('restaurant_menu') || [];
             const itemId = parseInt(document.getElementById('editItemId').value);
-            const itemIndex = menuItems.findIndex(i => i.id === itemId);
+            const updatedItem = {
+                category_id: parseInt(document.getElementById('editItemCategory').value),
+                name: document.getElementById('editItemName').value.trim(),
+                description: document.getElementById('editItemDescription').value.trim(),
+                price: parseFloat(document.getElementById('editItemPrice').value),
+                available: document.getElementById('editItemAvailable').checked
+            };
+
+            const { error } = await supabase
+                .from('menu_items')
+                .update(updatedItem)
+                .eq('id', itemId);
+
+            if (error) {
+                console.error('Error updating menu item:', error);
+                alert('Failed to update menu item.');
+                return;
+            }
             
-            if (itemIndex !== -1) {
-                menuItems[itemIndex] = {
-                    ...menuItems[itemIndex],
-                    categoryId: parseInt(document.getElementById('editItemCategory').value),
-                    name: document.getElementById('editItemName').value,
-                    description: document.getElementById('editItemDescription').value,
-                    price: parseFloat(document.getElementById('editItemPrice').value),
-                    available: document.getElementById('editItemAvailable').checked
-                };
-                
-                saveData('restaurant_menu', menuItems);
-                hideEditItemModal();
-                renderAdminMenu();
-                if (currentRole === 'customer') {
-                    renderMenu();
-                }
+            hideEditItemModal();
+            await renderAdminMenu();
+            if (currentRole === 'customer') {
+                await renderMenu();
             }
         });
 
-        document.getElementById('editCategoryForm').addEventListener('submit', function(e) {
+        document.getElementById('editCategoryForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            const categories = getData('restaurant_categories') || [];
             const categoryId = parseInt(document.getElementById('editCategoryId').value);
-            const categoryIndex = categories.findIndex(c => c.id === categoryId);
+            const newName = document.getElementById('editCategoryName').value.trim();
+
+            if (!newName) {
+                alert('Category name cannot be empty.');
+                return;
+            }
+
+            const { error } = await supabase
+                .from('categories')
+                .update({ name: newName })
+                .eq('id', categoryId);
+
+            if (error) {
+                console.error('Error updating category:', error);
+                alert('Failed to update category.');
+                return;
+            }
             
-            if (categoryIndex !== -1) {
-                categories[categoryIndex].name = document.getElementById('editCategoryName').value;
-                saveData('restaurant_categories', categories);
-                hideEditCategoryModal();
-                renderAdminMenu();
-                if (currentRole === 'customer') {
-                    renderMenu();
-                }
+            hideEditCategoryModal();
+            await renderAdminMenu();
+            if (currentRole === 'customer') {
+                await renderMenu();
             }
         });
 
         // Restaurant Name Management
-        function editRestaurantName() {
+        async function editRestaurantName() {
             if (currentRole !== 'admin') {
                 alert('Only admin can edit restaurant name');
                 return;
             }
             
-            const currentName = getData('restaurant_name') || 'Bella Vista Restaurant';
+            const { data, error } = await supabase
+                .from('restaurant')
+                .select('name')
+                .eq('id', 1)
+                .single();
+
+            const currentName = error ? 'Bella Vista Restaurant' : data.name;
             document.getElementById('newRestaurantName').value = currentName;
             document.getElementById('editNameModal').classList.remove('hidden');
         }
@@ -2047,39 +2150,82 @@
             document.getElementById('editNameModal').classList.add('hidden');
         }
 
-        function saveRestaurantName() {
+        async function saveRestaurantName() {
             const newName = document.getElementById('newRestaurantName').value.trim();
             if (!newName) {
                 alert('Please enter a restaurant name');
                 return;
             }
             
-            saveData('restaurant_name', newName);
-            updateRestaurantNameDisplay();
+            const { error } = await supabase
+                .from('restaurant')
+                .update({ name: newName })
+                .eq('id', 1);
+
+            if (error) {
+                console.error('Error updating restaurant name:', error);
+                alert('Failed to update restaurant name.');
+                return;
+            }
+
+            await updateRestaurantNameDisplay();
             hideEditNameModal();
             alert('Restaurant name updated successfully!');
         }
 
-        function updateRestaurantNameDisplay() {
-            const restaurantName = getData('restaurant_name') || 'Bella Vista Restaurant';
+        async function updateRestaurantNameDisplay() {
+            const { data, error } = await supabase
+                .from('restaurant')
+                .select('name')
+                .eq('id', 1)
+                .single();
+
+            const restaurantName = error ? 'Bella Vista Restaurant' : data.name;
             document.getElementById('restaurantName').textContent = restaurantName;
             document.getElementById('thankYouRestaurantName').textContent = restaurantName;
         }
 
 
 
+        // Real-time Subscription
+        function subscribeToOrderChanges() {
+            supabase.channel('custom-all-channel')
+                .on(
+                    'postgres_changes',
+                    { event: '*', schema: 'public', table: 'orders' },
+                    (payload) => {
+                        console.log('Order change detected:', payload);
+
+                        // If admin is active, refresh their view
+                        if (currentRole === 'admin') {
+                            renderOrders();
+                            updateOrderBadges();
+                        }
+
+                        // If a customer is active, check if the change affects them
+                        const changedOrder = payload.new || payload.old;
+                        if (currentRole === 'customer' && changedOrder && changedOrder.customer_name === currentCustomer) {
+                            updateCustomerOrdersDisplay();
+                        }
+                    }
+                )
+                .subscribe();
+        }
+
         // Initialize Application
-        function init() {
-            initializeDefaultData();
-            updateOrderBadges();
+        async function init() {
+            // The initializeDefaultData function has been removed.
+            await updateOrderBadges();
             setupModalCloseOnOutsideClick();
-            updateRestaurantNameDisplay();
+            await updateRestaurantNameDisplay();
             
+            subscribeToOrderChanges();
+
             // Show customer name modal if no name is set
             if (!currentCustomer) {
                 document.getElementById('nameModal').classList.remove('hidden');
             } else {
-                renderMenu();
+                await renderMenu();
             }
         }
 
