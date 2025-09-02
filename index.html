@@ -2172,20 +2172,23 @@
 
         // Restaurant Name Management
         async function editRestaurantName() {
-            if (currentRole !== 'admin') {
-                alert('Only admin can edit restaurant name');
-                return;
-            }
-            
-            const { data, error } = await supabase
-                .from('restaurant')
-                .select('name')
-                .eq('id', 1)
-                .single();
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                // If user is logged in, they must be an admin. Proceed.
+                const { data, error } = await supabase
+                    .from('restaurant')
+                    .select('name')
+                    .eq('id', 1)
+                    .single();
 
-            const currentName = error ? 'Bella Vista Restaurant' : data.name;
-            document.getElementById('newRestaurantName').value = currentName;
-            document.getElementById('editNameModal').classList.remove('hidden');
+                const currentName = error ? 'Bella Vista Restaurant' : data.name;
+                document.getElementById('newRestaurantName').value = currentName;
+                document.getElementById('editNameModal').classList.remove('hidden');
+            } else {
+                // If no user is logged in, prompt them to log in.
+                alert('You must be logged in as an admin to edit the restaurant name.');
+                showAdminLoginModal();
+            }
         }
 
         function hideEditNameModal() {
