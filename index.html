@@ -590,17 +590,6 @@
                 min-height: 44px; /* Better touch targets */
             }
 
-            .order-item {
-                flex-direction: column;
-                gap: 0.5rem;
-                align-items: flex-start;
-            }
-
-            .order-item > div:last-child {
-                align-self: flex-end;
-                font-weight: 600;
-            }
-
             .cart-badge {
                 width: 20px;
                 height: 20px;
@@ -821,7 +810,14 @@
 
             <div id="pendingOrders" class="orders-grid"></div>
             <div id="acceptedOrders" class="orders-grid hidden"></div>
+            <div id="completedContainer" class="hidden">
+                <div style="text-align: right; margin-bottom: 1rem;"><button onclick="clearOrdersByStatus('completed')" class="btn btn-danger">Clear All Completed</button></div>
+            </div>
             <div id="completedOrders" class="orders-grid hidden"></div>
+
+            <div id="rejectedContainer" class="hidden">
+                <div style="text-align: right; margin-bottom: 1rem;"><button onclick="clearOrdersByStatus('rejected')" class="btn btn-danger">Clear All Rejected</button></div>
+            </div>
             <div id="rejectedOrders" class="orders-grid hidden"></div>
         </div>
 
@@ -1607,12 +1603,35 @@
                 document.getElementById(`${s}Orders`).classList.toggle('hidden', s !== status);
             });
 
+            // Show/hide clear buttons
+            document.getElementById('completedContainer').classList.toggle('hidden', status !== 'completed');
+            document.getElementById('rejectedContainer').classList.toggle('hidden', status !== 'rejected');
+
             renderOrders();
         }
 
         async function renderAdminView() {
             await renderOrders();
             await updateOrderBadges();
+        }
+
+        async function clearOrdersByStatus(status) {
+            if (!currentRestaurantId) return;
+            if (!['completed', 'rejected'].includes(status)) return; // Safety check
+
+            if (confirm(`Are you sure you want to delete ALL ${status} orders? This action cannot be undone.`)) {
+                const { error } = await supabase
+                    .from('orders')
+                    .delete()
+                    .eq('status', status)
+                    .eq('restaurant_id', currentRestaurantId);
+
+                if (error) {
+                    console.error(`Error clearing ${status} orders:`, error);
+                    alert(`Failed to clear ${status} orders.`);
+                }
+                // The real-time subscription will automatically call renderOrders() and updateOrderBadges()
+            }
         }
 
         async function renderOrders() {
